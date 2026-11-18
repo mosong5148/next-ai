@@ -1,69 +1,153 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import React, { useState } from "react";
+import PdfUploader from "@/components/PdfUploader";
+import RenderQA from "@/components/RenderQA";
+import ChatComponent from "@/components/ChatComponent";
+import { Bot, Sparkles } from "lucide-react";
+
+interface DialoguePair {
+  question: string;
+  answer: string;
+}
+
+export default function AIKnowledgeAssistantPage() {
+  // 1. Centralized Telemetry State Registries
+  const [extractedText, setExtractedText] = useState<string>("");
+  const [activeFileName, setActiveFileName] = useState<string>("");
+  const [docId, setDocId] = useState<string>(""); // id of the indexed document on the server
+  const [conversation, setConversation] = useState<DialoguePair[]>([]);
+  const [isAiLoading, setIsAiLoading] = useState<boolean>(false);
+
+  // 2. Callback Listener: Synchronizes data records whenever a fresh file hits the dropzone
+  const handleDocumentUploadSuccess = (
+    text: string,
+    fileName: string,
+    newDocId: string,
+  ) => {
+    setExtractedText(text);
+    setActiveFileName(fileName);
+    setDocId(newDocId);
+    setConversation([]); // Flush historical session logs to prevent cross-context confusion
+  };
+
+  // 3. Central dispatcher: sends the question plus the document text to the AI route
+  const sendMessageToAi = async (userQuestion: string) => {
+    if (!userQuestion.trim() || isAiLoading) return;
+
+    setIsAiLoading(true);
+
+    // Optimistically insert the user's question into local conversation arrays first
+    setConversation((prev) => [
+      ...prev,
+      { question: userQuestion, answer: "" },
+    ]);
+
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question: userQuestion,
+          docId, // The server retrieves only the relevant chunks of this document
+          contextText: extractedText, // Fallback if the server no longer has the document
+        }),
+      });
+
+      if (!response.ok)
+        throw new Error("AI engine gateway network rejection exception.");
+      if (!response.body)
+        throw new Error(
+          "Server failed to return an accessible active streaming body.",
+        );
+
+      // 4. Read the text stream chunk by chunk
+      const streamReader = response.body.getReader();
+      const textDecoder = new TextDecoder();
+      let accumulatedAiAnswer = "";
+
+      while (true) {
+        const { value, done } = await streamReader.read();
+        if (done) break;
+
+        const chunkText = textDecoder.decode(value, { stream: true });
+        accumulatedAiAnswer += chunkText;
+
+        // Typewriter effect: update the last answer as each chunk arrives
+        setConversation((prev) => {
+          const updatedConvo = [...prev];
+          if (updatedConvo.length > 0) {
+            updatedConvo[updatedConvo.length - 1] = {
+              ...updatedConvo[updatedConvo.length - 1],
+              answer: accumulatedAiAnswer,
+            };
+          }
+          return updatedConvo;
+        });
+      }
+    } catch (error: unknown) {
+      const errMsg =
+        error instanceof Error ? error.message : "Dialogue connection timeout.";
+      console.error("AI dispatch conduit disrupted:", errMsg);
+
+      setConversation((prev) => {
+        const updatedConvo = [...prev];
+        if (updatedConvo.length > 0) {
+          updatedConvo[updatedConvo.length - 1] = {
+            ...updatedConvo[updatedConvo.length - 1],
+            answer: `Communication Disrupted: ${errMsg}`,
+          };
+        }
+        return updatedConvo;
+      });
+    } finally {
+      setIsAiLoading(false);
+    }
+  };
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <div className="flex h-screen w-screen flex-col overflow-hidden bg-[#0e0e10] text-[#efeff1] font-sans antialiased">
+      {/* Premium Dark Mode Fixed Navigation Header Block Bar */}
+      <header className="flex h-16 w-full items-center justify-between border-b border-[#1f1f23] bg-[#18181b] px-6 shadow-md z-50 select-none shrink-0">
+        <div className="flex items-center gap-2 font-black text-purple-500 text-lg tracking-tighter">
+          <Bot className="h-5 w-5 text-purple-500 animate-pulse" />
+          <span>
+            NEXT<span className="text-white font-medium">.AI</span>
+          </span>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+
+        {/* Dynamic Injected Status Indicator Capsule Row */}
+        {activeFileName && (
+          <div className="flex items-center gap-1.5 bg-purple-500/10 border border-purple-500/20 px-3 py-1 rounded-xl animate-in fade-in duration-300">
+            <Sparkles className="h-3.5 w-3.5 text-purple-400" />
+            <span className="text-[11px] font-black text-purple-400 tracking-wide truncate max-w-[200px]">
+              Active Vault: {activeFileName}
+            </span>
+          </div>
+        )}
+      </header>
+
+      {/* Primary Immersive Content Workspace Canvas Layout */}
+      <div className="flex-1 w-full overflow-hidden p-6 md:p-8 flex flex-col justify-between max-w-4xl mx-auto min-h-0">
+        {/* Upper Dashboard Region: Mounts the custom dragzone uploader matrix */}
+        <div className="w-full shrink-0 mb-6">
+          <PdfUploader onUploadSuccess={handleDocumentUploadSuccess} />
         </div>
-      </main>
+
+        {/* Central Region Container: scrollable conversation threads */}
+        <div className="flex-1 w-full rounded-2xl border border-zinc-900 bg-zinc-950/20 backdrop-blur-sm overflow-hidden p-4 flex flex-col min-h-0">
+          <RenderQA conversation={conversation} isAiLoading={isAiLoading} />
+        </div>
+
+        {/* Bottom Control Box Region: capsule-shaped voice dock */}
+        <div className="w-full shrink-0 mt-6">
+          <ChatComponent
+            onSendMessage={sendMessageToAi}
+            isLoading={isAiLoading}
+            conversation={conversation} // Passed down to drive the voice read-aloud loop
+          />
+        </div>
+      </div>
     </div>
   );
 }
